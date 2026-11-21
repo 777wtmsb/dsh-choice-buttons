@@ -17,11 +17,15 @@
 
 ## 安装
 
-```bash
-dsh plugin install dsh-choice-buttons
+从 GitHub 直接安装（无需 npm）：
+
+```
+plugin_manager install_bundle  github:777wtmsb/dsh-choice-buttons
 ```
 
-或在 DSH 的插件管理里按包名安装；也可以把本目录放进 profile 的 `node_modules` 并在 `dsh.profile.bundles` 里登记。
+等价的手工方式：在 profile 目录执行 `pnpm add github:777wtmsb/dsh-choice-buttons`，并在 profile 的 `package.json` 里把 `dsh-choice-buttons` 加进 `dsh.profile.bundles`。
+
+> npm 包暂未发布：npm 现在要求首次发布必须走 staged publishing 且批准环节强制 2FA，而新账号只支持硬件 FIDO2 安全密钥（TOTP 已停止开通）。等有硬件钥匙后才会补发 `npm i dsh-choice-buttons` 这条路。
 
 安装后**重启 DSH**（宿主半边需要加载一次）；之后只改 `client.js` 的话，页面 `Ctrl+R` 即可生效。
 
