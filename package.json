@@ -41,5 +41,17 @@
         "@deepseek-ai/dsh-client-ui-chat"
       ]
     }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/777wtmsb/dsh-choice-buttons.git"
+  },
+  "bugs": {
+    "url": "https://github.com/777wtmsb/dsh-choice-buttons/issues"
+  },
+  "homepage": "https://github.com/777wtmsb/dsh-choice-buttons#readme",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }
