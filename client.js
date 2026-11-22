@@ -1,10 +1,14 @@
 /**
  * dsh-choice-buttons — browser half.
  *
- * When the newest finished answer ends with a block of options ("A. …" or
- * "1. …"), this plugin shows the labels as pills in the composer dock. A click
- * writes the whole option line into the composer and submits it, so the choice
- * travels as an ordinary user message and stays unambiguous.
+ * When a finished answer contains a block of options ("A. …" or "1. …"), this
+ * plugin shows their labels as pills under that answer. A click writes the whole
+ * option line into the composer and submits it, so the choice travels as an
+ * ordinary user message and stays unambiguous.
+ *
+ * An answer may number the same options twice (letters and digits). Consecutive
+ * blocks with identical labels are treated as one choice: only the lettered
+ * block is shown. Blocks with different labels stay separate, one row each.
  */
 
 window.__ModuleLoader__.load({
@@ -17,34 +21,71 @@ window.__ModuleLoader__.load({
     const MIN_OPTIONS = 2;
 
     /** Separators accepted after the label: ".", "、", "．", ")", "）". */
-    const OPTION = /^\s*(?:[-*•]\s+)?\*{0,2}([A-H]|\d{1,2})\*{0,2}\s*[.、．)）]\s+(\S.*)$/;
+    const OPTION = /^ {0,3}(?:[-*•]\s+)?\*{0,2}([A-H]|\d{1,2})\*{0,2}\s*[.、．)）]\*{0,2}\s+(\S.*)$/;
+
+    /** Fenced code blocks are quoted content, never a list of choices. */
+    const FENCE = /^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?^ {0,3}\1[^\n]*$/gm;
+
+    /** Sequence head of a block: "1" for digits, "A" for letters. */
+    const expectedLabel = (first, index) => (/^\d+$/.test(first)
+      ? String(index + 1)
+      : String.fromCharCode(65 + index));
+
+    /** True for a block numbered 1, 2, 3… rather than A, B, C… */
+    const isNumeric = block => /^\d+$/.test(block[0].letter);
 
     /**
-     * Collect the last run of consecutive option lines in one answer.
-     * Blank lines may separate options. The run must start at the sequence head
-     * ("A" or "1") and ascend without gaps, so incidental prose never qualifies.
+     * Split an answer into blocks of consecutive option lines. Blank lines may
+     * separate options. A block counts only when it starts at the sequence head
+     * and ascends without gaps, so incidental prose never qualifies.
      * @param text - the answer's plain text.
-     * @returns options in written order; empty unless at least two qualify.
+     * @returns every qualifying block, in written order.
      */
-    function parseOptions(text) {
+    function parseOptionBlocks(text) {
       const runs = [];
       let pending = [];
       const flush = () => {
         if (pending.length >= MIN_OPTIONS) runs.push(pending);
         pending = [];
       };
-      for (const line of String(text || '').split(/\r?\n/)) {
+      const body = String(text || '').replace(FENCE, '');
+      for (const line of body.split(/\r?\n/)) {
         if (line.trim() === '') continue;
         const match = OPTION.exec(line);
         if (match === null) { flush(); continue; }
-        pending.push({ letter: match[1], label: match[2].trim() });
+        // A different numbering or a second "A" starts a new block; the same
+        // sequence simply continues, blank lines in between notwithstanding.
+        if (pending.length > 0 && match[1] !== expectedLabel(pending[0].letter, pending.length)) flush();
+        const label = match[2].replace(/^\*{1,3}/, '').replace(/\*{1,3}$/, '').trim();
+        pending.push({ letter: match[1], label });
       }
       flush();
-      const last = runs.at(-1);
-      if (last === undefined) return [];
-      const numeric = /^\d+$/.test(last[0].letter);
-      const expected = index => (numeric ? String(index + 1) : String.fromCharCode(65 + index));
-      return last.every((option, index) => option.letter === expected(index)) ? last : [];
+      return runs.filter(run => run.every((option, index) => option.letter === expectedLabel(run[0].letter, index)));
+    }
+
+    /** Labels joined for comparing two blocks, ignoring spacing differences. */
+    const labelKey = block => block.map(option => option.label.replace(/\s+/g, ' ').trim()).join('\u0000');
+
+    /**
+     * Blocks to show for one answer. Consecutive blocks that list the same labels
+     * are one choice written twice: keep the lettered one. Everything else stays.
+     * @param text - the answer's plain text.
+     * @returns blocks to render, one row each.
+     */
+    function choiceBlocks(text) {
+      const blocks = [];
+      for (const block of parseOptionBlocks(text)) {
+        const previous = blocks[blocks.length - 1];
+        const sameLabels = previous !== undefined
+          && previous.length === block.length
+          && labelKey(previous) === labelKey(block);
+        if (sameLabels) {
+          if (isNumeric(previous) && !isNumeric(block)) blocks[blocks.length - 1] = block;
+          continue;
+        }
+        blocks.push(block);
+      }
+      return blocks;
     }
 
     /** Join the prose of Assistant content blocks. */
@@ -55,30 +96,30 @@ window.__ModuleLoader__.load({
         .join('');
     }
 
-    /**
-     * Options of the answer that ends the given turn. Chat nodes expose no
-     * "assistant" kind: answer prose rides on the turn tail's closing blocks, and
-     * the tail node carries the turn it belongs to.
-     * @param snapshot - chat snapshot from useChat.
-     * @param turn - the turn this tail component was mounted for.
-     * @returns parsed options; empty when that answer offers none.
-     */
-    function optionsForTurn(snapshot, turn) {
+    /** The answer prose that closes one turn, or empty text. */
+    function answerText(snapshot, turn) {
       const nodes = snapshot && snapshot.nodes;
       const list = nodes && typeof nodes.values === 'function' ? Array.from(nodes.values()) : [];
       for (const node of list) {
         if (!node || node.kind !== 'turn-tail' || !node.data || !node.data.closing) continue;
         if (String(node.data.turn) !== String(turn)) continue;
-        return parseOptions(blocksText(node.data.closing.blocks));
+        return blocksText(node.data.closing.blocks);
       }
-      return [];
+      return '';
     }
 
     const stripStyle = {
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'flex-start',
+      gap: '8px',
+      padding: '10px 0 4px',
+    };
+
+    const rowStyle = {
       display: 'inline-flex',
       alignItems: 'center',
       gap: '10px',
-      padding: '10px 0 4px',
     };
 
     /** Rounded chip; hover only deepens the fill, the label keeps its colour. */
@@ -105,36 +146,30 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Label pills for this turn's option block.
+     * Label pills for this turn's option blocks.
      * @param props - turn-tail props (turn, useChat, inputActions).
      * @returns the pill strip, or null when this answer offers no options.
      */
     function ChoicePills(props) {
       const { turn, useChat, inputActions } = props;
       // The turn tail carries the turn it belongs to; the chat snapshot's turn ids
-      // match it, which is how this answer's option block is found.
+      // match it, which is how this answer's options are found.
       const turnKey = turn && typeof turn === 'object' ? (turn.turn !== undefined ? turn.turn : turn.id) : turn;
-      const options = typeof useChat === 'function'
-        ? useChat(snapshot => {
-          const nodes = snapshot && snapshot.nodes;
-          const list = nodes && typeof nodes.values === 'function' ? Array.from(nodes.values()) : [];
-          for (const node of list) {
-            if (!node || node.kind !== 'turn-tail' || !node.data || !node.data.closing) continue;
-            if (String(node.data.turn) !== String(turnKey)) continue;
-            return parseOptions(blocksText(node.data.closing.blocks));
-          }
-          return [];
-        }) || []
-        : [];
+      // Select plain text, not a fresh array: a new array on every snapshot would
+      // re-render (or loop) for no visible change.
+      const answer = typeof useChat === 'function'
+        ? useChat(snapshot => answerText(snapshot, turnKey)) || ''
+        : '';
+      const blocks = React.useMemo(() => choiceBlocks(answer), [answer]);
       const [hovered, setHovered] = React.useState(null);
       // A tail stays mounted while its answer is edited, so re-arm per option set.
-      const signature = options.map(option => option.letter + ':' + option.label).join('|');
+      const signature = blocks.map(block => block.map(option => option.letter + ':' + option.label).join('|')).join('||');
       const [sent, setSent] = React.useState(null);
       React.useEffect(() => { setSent(null); }, [signature]);
-      if (options.length === 0 || sent !== null || !inputActions) return null;
+      if (blocks.length === 0 || sent !== null || !inputActions) return null;
 
       const choose = option => {
-        setSent(option.letter);
+        setSent(option.key);
         inputActions.setDraft(option.letter + '. ' + option.label);
         // The editor commits the draft synchronously; submit on the next task so
         // the submission reads the new draft instead of the previous one.
@@ -144,21 +179,28 @@ window.__ModuleLoader__.load({
       return h(
         'div',
         { style: stripStyle },
-        options.map(option => h(
-          'button',
-          {
-            key: option.letter,
-            type: 'button',
-            title: `${option.letter}. ${option.label}`,
-            'aria-label': `选项 ${option.letter}：${option.label}`,
-            style: chipStyle(hovered === option.letter),
-            onMouseEnter: () => setHovered(option.letter),
-            onMouseLeave: () => setHovered(null),
-            onFocus: () => setHovered(option.letter),
-            onBlur: () => setHovered(null),
-            onClick: () => choose(option),
-          },
-          option.letter,
+        blocks.map((block, blockIndex) => h(
+          'div',
+          { key: 'block-' + blockIndex, style: rowStyle },
+          block.map(option => {
+            const key = blockIndex + ':' + option.letter;
+            return h(
+              'button',
+              {
+                key,
+                type: 'button',
+                title: `${option.letter}. ${option.label}`,
+                'aria-label': `选项 ${option.letter}：${option.label}`,
+                style: chipStyle(hovered === key),
+                onMouseEnter: () => setHovered(key),
+                onMouseLeave: () => setHovered(null),
+                onFocus: () => setHovered(key),
+                onBlur: () => setHovered(null),
+                onClick: () => choose({ ...option, key }),
+              },
+              option.letter,
+            );
+          }),
         )),
       );
     }
